@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<!--
+港鐵實時列車地圖 (Hong Kong MTR Live Map)
+Copyright (c) 2026 ckyeung38. All rights reserved.
+https://github.com/ckyeung38/Hong-Kong-MTR-Live-Map
+
+本站位置數據：開放數據 | 實時班次：港鐵 Next Train API (data.gov.hk)
+-->
+<html lang="zh-Hant-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>港鐵實時列車地圖</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#ffffff;
+    color:#1a2733; font-family: -apple-system, "PingFang HK", "Microsoft JhengHei", "Noto Sans HK", sans-serif; }
+  #map { position:fixed; inset:0; display:block; touch-action:none; }
+  #topbar { position:fixed; top:0; left:0; right:0; z-index:10; padding:10px 14px 8px;
+    background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,0)); pointer-events:none; }
+  #topbar .row { display:flex; align-items:center; gap:10px; pointer-events:auto; flex-wrap:wrap; }
+  #title { font-size:17px; font-weight:700; letter-spacing:.5px; white-space:nowrap; color:#16222d; }
+  @media (max-width:480px) {
+    #title { font-size:15px; }
+    #clock { font-size:12px; }
+    #trainCount { font-size:11px; }
+  }
+  #clock { font-size:13px; color:#5a6d7e; font-variant-numeric:tabular-nums; }
+  #badge { font-size:12px; padding:3px 10px; border-radius:20px; background:#f0f5f9; border:1px solid #c5d3de; color:#5a6d7e; white-space:nowrap; }
+  #badge.live { background:#e6f6ec; border-color:#34a853; color:#137333; }
+  #badge.updating { background:#fdf3e0; border-color:#d9a62e; color:#8a5f00; }
+  #badge.sim { background:#f3e9f7; border-color:#a86fb8; color:#7b2d8e; }
+  #badge.err { background:#fdeceb; border-color:#d64545; color:#b3261e; }
+  #badge.rest { background:#eef1f4; border-color:#9aa8b5; color:#5a6d7e; }
+  #trainCount { margin-left:auto; font-size:12px; color:#5a6d7e; white-space:nowrap; }
+  #chips { position:fixed; left:8px; top:50%; transform:translateY(-50%); z-index:10;
+    display:flex; flex-direction:column; gap:6px; pointer-events:auto; }
+  .chip { display:flex; align-items:center; gap:7px; font-size:12px; padding:7px 11px 7px 9px;
+    border-radius:16px; background:rgba(255,255,255,.94); border:1px solid #c5d3de;
+    color:#33424f; cursor:pointer; white-space:nowrap; box-shadow:0 1px 4px rgba(20,40,60,.10); }
+  .chip .dot { width:10px; height:10px; border-radius:50%; flex:0 0 auto; }
+  .chip.off { opacity:.35; }
+  @media (max-width:480px) {
+    #chips { left:6px; gap:5px; }
+    .chip { font-size:11px; padding:6px 9px 6px 8px; }
+  }
+  #hint { position:fixed; bottom:10px; left:12px; z-index:10; font-size:11px; color:#6d8395; pointer-events:none; }
+  #src { position:fixed; bottom:10px; right:12px; z-index:10; font-size:10px; color:#8aa0b2; text-align:right; pointer-events:none; }
+  #panel { position:fixed; left:0; right:0; bottom:0; z-index:20; max-height:46%; overflow-y:auto;
+    background:rgba(255,255,255,.98); border-top:1px solid #c5d3de; border-radius:14px 14px 0 0;
+    padding:12px 16px 20px; transform:translateY(105%); transition:transform .25s ease; color:#1a2733; }
+  #panel.open { transform:translateY(0); }
+  #panel h3 { margin:0 0 2px; font-size:16px; }
+  #panel .en { font-size:11px; color:#7c8fa3; margin-bottom:8px; }
+  #panelClose { position:absolute; top:8px; right:14px; font-size:20px; color:#7c8fa3; cursor:pointer; padding:4px; }
+  .dep { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #e3ebf1; font-size:13px; }
+  .dep:last-child { border-bottom:none; }
+  .dep .dest { font-weight:600; }
+  .dep .meta { color:#5a6d7e; font-size:12px; font-variant-numeric:tabular-nums; }
+  .dep .mins { color:#137333; font-weight:700; font-size:14px; font-variant-numeric:tabular-nums; }
+  .dep.fl { padding:5px 0; }
+  .dep.fl .meta { font-size:11px; }
+  .lineTag { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  #tooltip { position:fixed; z-index:30; pointer-events:none; background:rgba(255,255,255,.97);
+    border:1px solid #c5d3de; border-radius:8px; padding:6px 10px; font-size:12px; display:none; max-width:70vw; color:#1a2733; }
+  #zoomctl { position:fixed; right:12px; bottom:64px; z-index:10; display:flex; flex-direction:column; gap:8px; }
+  #zoomctl button { width:46px; height:46px; border-radius:50%; border:1px solid #b8c9d6;
+    background:rgba(255,255,255,.95); color:#1a2733; font-size:20px; cursor:pointer; line-height:1;
+    box-shadow:0 1px 4px rgba(30,50,70,.18); }
+  #zoomctl button:active { background:#dbe7f0; }
+  #errbar { position:fixed; top:0; left:0; right:0; z-index:40; background:#b3261e; color:#fff;
+    font-size:12px; padding:6px 12px; text-align:center; display:none; }
+  /* 搜尋欄（topbar 第二行） */
+  #searchbar { width:100%; max-width:430px; position:relative; }
+  #searchInput { width:100%; font-size:16px; padding:8px 14px; border-radius:20px;
+    border:1px solid #c5d3de; background:rgba(255,255,255,.96); color:#1a2733; outline:none;
+    box-shadow:0 1px 6px rgba(20,40,60,.12); }
+  #searchInput:focus { border-color:#007DC5; }
+  #searchResults { margin-top:6px; border-radius:12px; background:rgba(255,255,255,.98);
+    border:1px solid #c5d3de; box-shadow:0 4px 16px rgba(20,40,60,.15); display:none;
+    max-height:46vh; overflow-y:auto; }
+  #searchResults.open { display:block; }
+  .srItem { display:flex; align-items:center; gap:8px; padding:9px 12px; font-size:13px; cursor:pointer; color:#1a2733; }
+  .srItem:active { background:#eef4f9; }
+  .srItem .en { color:#7c8fa3; font-size:11px; margin-left:auto; white-space:nowrap; }
+  .srItem .dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+  /* 深色模式 */
+  body.dark { background:#0d1319; color:#edf2f7; }
+  body.dark #topbar { background:linear-gradient(180deg, rgba(13,19,25,.96), rgba(13,19,25,0)); }
+  body.dark #title { color:#f0f4f8; }
+  body.dark #clock, body.dark #trainCount { color:#93a5b5; }
+  body.dark #badge { background:#1a2634; border-color:#2c3e50; color:#93a5b5; }
+  body.dark #badge.live { background:#0f2f1e; border-color:#2f9e5f; color:#5fd68a; }
+  body.dark #badge.updating { background:#3a2c10; border-color:#d9a62e; color:#e8bd4a; }
+  body.dark #badge.sim { background:#2a1e38; border-color:#8a5fa8; color:#c79ae0; }
+  body.dark #badge.err { background:#3a1414; border-color:#b3261e; color:#ff8a80; }
+  body.dark #badge.rest { background:#1a2634; border-color:#2c3e50; color:#93a5b5; }
+  body.dark .chip { background:rgba(22,32,42,.94); border-color:#2c3e50; color:#d7e0e8; box-shadow:0 1px 4px rgba(0,0,0,.4); }
+  body.dark #hint, body.dark #src { color:#7e97ab; }
+  body.dark #panel { background:rgba(18,26,35,.98); border-top-color:#2c3e50; color:#edf2f7; }
+  body.dark #panel .en, body.dark #panelClose { color:#93a5b5; }
+  body.dark .dep { border-bottom-color:#22303d; }
+  body.dark .dep .meta { color:#93a5b5; }
+  body.dark .dep .mins { color:#5fd68a; }
+  body.dark #tooltip { background:rgba(18,26,35,.97); border-color:#2c3e50; color:#edf2f7; }
+  body.dark #zoomctl button { background:rgba(22,32,42,.95); border-color:#2c3e50; color:#edf2f7; }
+  body.dark #zoomctl button:active { background:#243444; }
+  body.dark #searchInput { background:rgba(22,32,42,.96); border-color:#2c3e50; color:#edf2f7; }
+  body.dark #searchResults { background:rgba(18,26,35,.98); border-color:#2c3e50; }
+  body.dark .srItem { color:#edf2f7; }
+  body.dark .srItem:active { background:#22303d; }
+  body.dark .srItem .en { color:#93a5b5; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<div id="errbar"></div>
+<div id="topbar">
+  <div class="row">
+    <div id="title">港鐵實時列車地圖</div>
+    <div id="clock">--:--:--</div>
+    <div id="badge">連接中…</div>
+    <div id="trainCount"></div>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <div id="searchbar"><input id="searchInput" placeholder="🔍 搜尋車站…" autocomplete="off"><div id="searchResults"></div></div>
+  </div>
+</div>
+<div id="chips"></div>
+<div id="panel"><div id="panelClose">✕</div><h3 id="panelName"></h3><div class="en" id="panelEn"></div><div id="panelBody"></div></div>
+<div id="tooltip"></div>
+<div id="hint">白箭咀指行駛方向 · 彩色圈係轉車站 · 撳站睇班次</div>
+<div id="src">實時班次：港鐵 Next Train API (data.gov.hk)<br>車站位置：開放數據</div>
+<div id="zoomctl">
+  <button id="btnDark" aria-label="深色模式">🌙</button>
+  <button id="btnLoc" aria-label="附近車站">📍</button>
+  <button id="zin" aria-label="放大">＋</button>
+  <button id="zout" aria-label="縮小">－</button>
+  <button id="zreset" aria-label="重設視角">⤾</button>
+</div>
+<script>
+"use strict";
+const STATIONS={
+CEN:[22.281908,114.159198,"中環","Central"],
+ADM:[22.278628,114.165524,"金鐘","Admiralty"],
+TST:[22.29718,114.172205,"尖沙咀","Tsim Sha Tsui"],
+JOR:[22.304665,114.171746,"佐敦","Jordan"],
+YMT:[22.312804,114.170581,"油麻地","Yau Ma Tei"],
+MOK:[22.319308,114.169374,"旺角","Mong Kok"],
+PRE:[22.324455,114.168302,"太子","Prince Edward"],
+SSP:[22.330726,114.162337,"深水埗","Sham Shui Po"],
+CSW:[22.335507,114.15616,"長沙灣","Cheung Sha Wan"],
+LCK:[22.337396,114.148414,"茘枝角","Lai Chi Kok"],
+MEF:[22.33889,114.136555,"美孚","Mei Foo"],
+LAK:[22.348322,114.126059,"茘景","Lai King"],
+KWF:[22.356844,114.127805,"葵芳","Kwai Fong"],
+KWH:[22.36317,114.131199,"葵興","Kwai Hing"],
+TWH:[22.370817,114.125006,"大窩口","Tai Wo Hau"],
+TSW:[22.373738,114.117642,"荃灣","Tsuen Wan"],
+KET:[22.281225,114.128381,"堅尼地城","Kennedy Town"],
+HKU:[22.283976,114.135507,"香港大學","HKU"],
+SYP:[22.285435,114.142642,"西營盤","Sai Ying Pun"],
+SHW:[22.28684,114.152161,"上環","Sheung Wan"],
+WAC:[22.277584,114.17286,"灣仔","Wan Chai"],
+CAB:[22.279389,114.18374,"銅鑼灣","Causeway Bay"],
+TIH:[22.282277,114.191917,"天后","Tin Hau"],
+FOH:[22.287563,114.193315,"炮台山","Fortress Hill"],
+NOP:[22.290909,114.200753,"北角","North Point"],
+QUB:[22.288165,114.208992,"鰂魚涌","Quarry Bay"],
+TAK:[22.284637,114.216322,"太古","Tai Koo"],
+SWH:[22.28163,114.222289,"西灣河","Sai Wan Ho"],
+SKW:[22.279173,114.228842,"筲箕灣","Shau Kei Wan"],
+HFC:[22.276673,114.23972,"杏花邨","Heng Fa Chuen"],
+CHW:[22.264453,114.237044,"柴灣","Chai Wan"],
+WHA:[22.304951,114.189536,"黃埔","Whampoa"],
+HOM:[22.309515,114.182624,"何文田","Ho Man Tin"],
+SKM:[22.331809,114.168802,"石硤尾","Shek Kip Mei"],
+KOT:[22.337002,114.175859,"九龍塘","Kowloon Tong"],
+LOF:[22.338023,114.187233,"樂富","Lok Fu"],
+WTS:[22.341572,114.194009,"黃大仙","Wong Tai Sin"],
+DIH:[22.3397,114.201442,"鑽石山","Diamond Hill"],
+CHH:[22.334993,114.208818,"彩虹","Choi Hung"],
+KOB:[22.32349,114.214084,"九龍灣","Kowloon Bay"],
+NTK:[22.315449,114.21896,"牛頭角","Ngau Tau Kok"],
+KWT:[22.312127,114.226511,"觀塘","Kwun Tong"],
+LAT:[22.306886,114.233079,"藍田","Lam Tin"],
+YAT:[22.297788,114.237159,"油塘","Yau Tong"],
+TIK:[22.304075,114.25237,"調景嶺","Tiu Keng Leng"],
+TKO:[22.307362,114.25992,"將軍澳","Tseung Kwan O"],
+LHP:[22.295559,114.268752,"康城","LOHAS Park"],
+HAH:[22.315571,114.26444,"坑口","Hang Hau"],
+POA:[22.322491,114.257903,"寶琳","Po Lam"],
+EXC:[22.281613,114.17569,"會展","Exhibition Centre"],
+HUH:[22.302901,114.182248,"紅磡","Hung Hom"],
+MKK:[22.322191,114.172709,"旺角東","Mong Kok East"],
+TAW:[22.37305,114.178448,"大圍","Tai Wai"],
+SHT:[22.382999,114.187739,"沙田","Sha Tin"],
+FOT:[22.395287,114.198108,"火炭","Fo Tan"],
+RAC:[22.400417,114.20278,"馬場","Racecourse"],
+UNI:[22.413569,114.210103,"大學","University"],
+TAP:[22.444651,114.170635,"大埔墟","Tai Po Market"],
+TWO:[22.451068,114.161055,"太和","Tai Wo"],
+FAN:[22.491989,114.13881,"粉嶺","Fanling"],
+SHS:[22.501162,114.128033,"上水","Sheung Shui"],
+LOW:[22.528177,114.113339,"羅湖","Lo Wu"],
+LMC:[22.514457,114.065682,"落馬洲","Lok Ma Chau"],
+WKS:[22.42913,114.243898,"烏溪沙","Wu Kai Sha"],
+MOS:[22.42482,114.231614,"馬鞍山","Ma On Shan"],
+HEO:[22.417506,114.225753,"恆安","Heng On"],
+TSH:[22.408598,114.222803,"大水坑","Tai Shui Hang"],
+SHM:[22.387656,114.208319,"石門","Shek Mun"],
+CIO:[22.382882,114.20355,"第一城","City One"],
+STW:[22.377027,114.194987,"沙田圍","Sha Tin Wai"],
+CKT:[22.374767,114.186176,"車公廟","Che Kung Temple"],
+HIK:[22.363959,114.170813,"顯徑","Hin Keng"],
+KAT:[22.330499,114.199367,"啟德","Kai Tak"],
+SUW:[22.325896,114.191327,"宋皇臺","Sung Wong Toi"],
+TKW:[22.316975,114.187649,"土瓜灣","To Kwa Wan"],
+ETS:[22.295561,114.175072,"尖東","East Tsim Sha Tsui"],
+AUS:[22.304236,114.166601,"柯士甸","Austin"],
+NAC:[22.326355,114.153583,"南昌","Nam Cheong"],
+TWW:[22.368349,114.109928,"荃灣西","Tsuen Wan West"],
+KSR:[22.434795,114.063432,"錦上路","Kam Sheung Road"],
+YUL:[22.445652,114.03464,"元朗","Yuen Long"],
+LOP:[22.447672,114.025449,"朗屏","Long Ping"],
+TIS:[22.4494,114.006044,"天水圍","Tin Shui Wai"],
+SIH:[22.411991,113.978257,"兆康","Siu Hong"],
+TUM:[22.393822,113.973107,"屯門","Tuen Mun"],
+HOK:[22.284717,114.158072,"香港","Hong Kong"],
+KOW:[22.304925,114.1616,"九龍","Kowloon"],
+OLY:[22.317697,114.160281,"奧運","Olympic"],
+TSY:[22.358363,114.107429,"青衣","Tsing Yi"],
+SUN:[22.331984,114.028915,"欣澳","Sunny Bay"],
+TUC:[22.289245,113.941374,"東涌","Tung Chung"],
+AIR:[22.315922,113.936543,"機場","Airport"],
+AWE:[22.321988,113.942221,"博覽館","AsiaWorld-Expo"],
+OCP:[22.248582,114.174368,"海洋公園","Ocean Park"],
+WCH:[22.247864,114.167512,"黃竹坑","Wong Chuk Hang"],
+LET:[22.242195,114.155828,"利東","Lei Tung"],
+SOH:[22.242842,114.148754,"海怡半島","South Horizons"],
+DIS:[22.315392,114.045141,"迪士尼","Disneyland Resort"],
+};
+const LINES=[
+{code:"AEL",tc:"機場快綫",en:"Airport Express",color:"#00888A",speed:90,main:["HOK","KOW","TSY","AIR","AWE"],branches:[]},
+{code:"DRL",tc:"迪士尼綫",en:"Disneyland Resort Line",color:"#F49AC1",speed:40,main:["SUN","DIS"],branches:[]},
+{code:"EAL",tc:"東鐵綫",en:"East Rail Line",color:"#53B7E8",speed:55,main:["ADM","EXC","HUH","MKK","KOT","TAW","SHT","FOT","UNI","TAP","TWO","FAN","SHS"],branches:[["SHS","LOW"],["SHS","LMC"],["SHT","RAC","UNI"]]},
+{code:"ISL",tc:"港島綫",en:"Island Line",color:"#007DC5",speed:35,main:["KET","HKU","SYP","SHW","CEN","ADM","WAC","CAB","TIH","FOH","NOP","QUB","TAK","SWH","SKW","HFC","CHW"],branches:[]},
+{code:"KTL",tc:"觀塘綫",en:"Kwun Tong Line",color:"#00A651",speed:35,main:["WHA","HOM","YMT","MOK","PRE","SKM","KOT","LOF","WTS","DIH","CHH","KOB","NTK","KWT","LAT","YAT","TIK"],branches:[]},
+{code:"SIL",tc:"南港島綫",en:"South Island Line",color:"#B4D333",speed:35,main:["ADM","OCP","WCH","LET","SOH"],branches:[]},
+{code:"TCL",tc:"東涌綫",en:"Tung Chung Line",color:"#F7941D",speed:65,main:["HOK","KOW","OLY","NAC","LAK","TSY","SUN","TUC"],branches:[]},
+{code:"TKL",tc:"將軍澳綫",en:"Tseung Kwan O Line",color:"#7D499D",speed:35,main:["NOP","QUB","YAT","TIK","TKO","HAH","POA"],branches:[["TKO","LHP"]]},
+{code:"TML",tc:"屯馬綫",en:"Tuen Ma Line",color:"#9A3B26",speed:40,main:["WKS","MOS","HEO","TSH","SHM","CIO","STW","CKT","TAW","HIK","DIH","KAT","SUW","TKW","HOM","HUH","ETS","AUS","NAC","MEF","TWW","KSR","YUL","LOP","TIS","SIH","TUM"],branches:[]},
+{code:"TWL",tc:"荃灣綫",en:"Tsuen Wan Line",color:"#E1251B",speed:35,main:["CEN","ADM","TST","JOR","YMT","MOK","PRE","SSP","CSW","LCK","MEF","LAK","KWF","KWH","TWH","TSW"],branches:[]},
+];
+/* 頭班車/尾班車（總站開出時間，平日）。
+   key = 總站 code，值 = [頭班車, 尾班車]。hide = 額外短棍尾班（for 收車判斷）。
+   來源：AEL 港鐵官方 timetable；其餘 travelchinaguide 整理港鐵時間表 / Moovit（中高信心）。 */
+const FIRST_LAST = {
+  TWL: { CEN: ["06:06", "00:54"], TSW: ["06:00", "00:30"], sun: { TSW: ["06:30", null] } },
+  ISL: { KET: ["06:00", "00:50"], CHW: ["05:55", "00:35"] },
+  KTL: { WHA: ["06:10", "01:00"], TIK: ["06:07", "01:15"] },
+  TKL: { NOP: ["06:13", "01:12"], POA: ["06:00", "00:50"], LHP: ["05:57", "00:48"] },
+  TCL: { HOK: ["06:01", "00:50"], TUC: ["06:02", "00:43"] },
+  AEL: { HOK: ["05:50", "00:48"], AWE: ["06:00", "00:45"] },
+  EAL: { ADM: ["06:04", "23:01"], LOW: ["05:55", "00:00"], LMC: ["06:38", "22:55"], hide: "00:22" },
+  TML: { TUM: ["05:45", "00:09"], WKS: ["05:38", "23:54"] },
+  SIL: { ADM: ["06:11", "01:05"], SOH: ["06:00", "00:42"] },
+  DRL: { SUN: ["06:15", "00:45"], DIS: ["06:20", "00:40"] },
+};
+const SCHEM={ADM:[1520.0,1696.7],AIR:[385.8,1340.0],AUS:[1269.2,1448.5],AWE:[471.8,1220.5],CAB:[1750.8,1697.5],CEN:[1293.2,1690.5],CHH:[2337.8,978.5],CHW:[2872.5,2070.0],CIO:[2130.2,443.0],CKT:[2050.8,709.0],CSW:[1307.0,978.0],DIH:[2209.8,978.5],DIS:[742.0,1359.0],ETS:[1650.0,1450.0],EXC:[1630.5,1581.9],FAN:[1308.8,445.0],FOH:[2055.2,1697.5],FOT:[1819.8,593.0],HAH:[2835.0,1232.0],HEO:[2569.8,443.0],HFC:[2872.5,1941.0],HIK:[2018.5,900.8],HKU:[833.2,1697.0],HOK:[1293.3,1590.0],HOM:[1875.2,1383.5],HUH:[1814.8,1467.0],JOR:[1575.0,1367.0],KAT:[2126.1,1079.8],KET:[678.2,1697.0],KOB:[2436.8,998.5],KOT:[1821.2,984.5],KOW:[1056.5,1414.5],KSR:[344.0,735.0],KWF:[825.8,978.5],KWH:[690.8,978.0],KWT:[2455.8,1184.5],LAK:[978.0,978.0],LAT:[2455.8,1286.5],LCK:[1190.0,978.0],LET:[1126.8,2035.0],LHP:[2870.0,1497.0],LMC:[931.8,499.0],LOF:[1941.2,978.5],LOP:[344.0,527.0],LOW:[1026.8,445.0],MEF:[1096.0,978.0],MKK:[1821.2,1167.5],MOK:[1575.0,1167.3],MOS:[2714.2,443.0],NAC:[1069.2,1127.0],NOP:[2207.2,1690.5],NTK:[2455.8,1083.5],OCP:[1540.8,1857.5],OLY:[1063.0,1290.0],POA:[2826.0,1094.0],PRE:[1575.0,1067.5],QUB:[2358.9,1690.8],RAC:[1872.8,593.0],SHM:[2275.8,443.0],SHS:[1168.8,445.0],SHT:[1819.8,709.0],SHW:[1140.2,1697.0],SIH:[234.0,625.0],SKM:[1632.0,979.0],SKW:[2806.5,1803.0],SOH:[924.2,2035.0],SSP:[1575.0,978.0],STW:[2050.8,593.0],SUN:[649.2,1249.0],SUW:[2042.5,1181.0],SWH:[2664.8,1695.5],SYP:[986.2,1697.0],TAK:[2511.8,1697.5],TAP:[1590.8,445.0],TAW:[1827.2,823.0],TIH:[1902.8,1697.5],TIK:[2664.2,1375.5],TIS:[291.0,432.0],TKO:[2793.8,1382.5],TKW:[1958.9,1282.3],TSH:[2422.8,443.0],TST:[1575.0,1433.0],TSW:[397.0,978.0],TSY:[715.0,1092.0],TUC:[449.0,1438.0],TUM:[234.0,778.0],TWH:[554.0,978.0],TWO:[1450.8,445.0],TWW:[397.0,838.0],UNI:[1753.8,445.0],WAC:[1598.2,1697.5],WCH:[1358.0,1938.0],WHA:[1836.0,1420.0],WKS:[2860.8,443.0],WTS:[2073.2,978.5],YAT:[2534.2,1375.5],YMT:[1575.0,1268.5],YUL:[344.0,625.0]};
+// 站名標籤偏移 [dx, dy, align]：避開相鄰太近嘅站
+const LBL_OFF={TWW:[-9,-12,"right"],TSW:[9,-2,"left"],RAC:[9,-12,"left"],FOT:[-9,-12,"right"]};
+const WATER=[[[-53.5,217.5],[167.5,220.5],[292.2,236.0],[320.8,264.0],[268.5,277.0],[135.5,275.0],[62.8,279.2],[50.2,289.8],[51.0,427.8],[65.0,693.2],[80.2,833.8],[96.8,849.2],[146.0,858.0],[228.0,860.0],[278.0,888.2],[296.0,942.8],[343.2,953.5],[419.8,1010.0],[436.8,1010.0],[394.2,1010.0],[374.5,1010.0],[377.5,1015.5],[404.5,1120.2],[455.5,1282.8],[474.8,1361.2],[462.2,1355.8],[436.5,1291.8],[397.5,1169.2],[371.5,1121.8],[358.5,1149.2],[337.0,1172.0],[307.0,1190.0],[292.2,1228.8],[292.8,1288.2],[298.0,1328.0],[308.0,1348.0],[324.2,1358.2],[346.8,1358.8],[357.8,1355.0],[357.2,1347.0],[384.8,1350.2],[440.2,1364.8],[440.5,1376.0],[385.5,1384.0],[284.5,1388.8],[137.5,1390.2],[61.2,1396.2],[55.8,1406.8],[57.5,1475.5],[66.5,1602.5],[77.5,1670.2],[90.5,1678.8],[177.0,1683.8],[337.0,1685.2],[489.5,1622.0],[634.5,1494.0],[738.2,1427.8],[800.8,1423.2],[823.0,1406.2],[805.0,1376.8],[733.5,1304.0],[608.5,1188.0],[507.8,1109.5],[431.2,1068.5],[392.5,1028.2],[391.5,1010.0],[413.2,1010.0],[457.8,1010.0],[516.8,1010.0],[590.2,1010.0],[642.8,1010.0],[674.2,1010.0],[716.2,1017.2],[768.8,1153.8],[795.2,1244.0],[795.8,1288.0],[820.8,1333.0],[870.2,1379.0],[910.8,1412.5],[942.2,1433.5],[963.5,1443.2],[974.5,1441.8],[1005.2,1463.8],[1055.8,1509.2],[978.0,1539.0],[772.0,1553.0],[659.8,1570.8],[641.2,1592.2],[630.8,1674.8],[628.2,1818.2],[632.5,1893.5],[643.5,1900.5],[788.2,1913.2],[1066.8,1931.8],[1214.0,1947.8],[1230.0,1961.2],[1231.0,1976.5],[1217.0,1993.5],[1205.2,1998.5],[1195.8,1991.5],[1123.2,1989.5],[987.8,1992.5],[918.8,1982.8],[916.2,1960.2],[912.2,1953.5],[906.8,1962.5],[906.5,2014.0],[911.5,2108.0],[671.8,2151.5],[187.2,2144.5],[-82.2,1659.8],[-136.8,697.2],[-164.0,216.0],[-164.0,216.0]],[[78.5,1729.8],[73.5,1735.2],[77.2,1826.2],[89.8,2002.8],[196.8,2091.5],[398.2,2092.5],[493.2,2003.5],[481.8,1824.5],[377.2,1733.0],[179.8,1729.0],[81.0,1727.0],[81.0,1727.0]],[[3064.0,2185.5],[2968.0,2184.5],[2914.5,2085.8],[2841.0,1646.2],[2382.5,1547.8],[2254.5,1476.0],[2327.8,1333.8],[2421.5,1424.5],[2872.5,1500.5],[2846.2,985.0],[2709.2,894.8],[2733.2,783.0],[2955.0,722.8],[3049.0,1076.0],[3112.0,2186.0]],[[800.0,1475.0],[2350.0,1475.0],[2350.0,1580.0],[800.0,1580.0]],[[1303.2,2026.5],[1415.8,2117.5],[1460.0,2162.8],[1436.0,2162.2],[1372.8,2125.0],[1270.2,2051.0],[1226.0,2005.8],[1240.0,1989.2],[1247.0,1981.0],[1247.0,1981.0]]];;;;
+const REGION_LABELS=[["深圳","Shenzhen",700,350],["新界","New Territories",2280,620],["九龍","Kowloon",1900,1320],["大嶼山","Lantau Island",340,1540],["港島","Hong Kong Island",2080,2080]];
+
+// ================= UTIL =================
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371, dLa = (lat2 - lat1) * Math.PI / 180, dLn = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLa / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLn / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function fmtClock(d) {
+  try {
+    return new Intl.DateTimeFormat("zh-HK", { timeZone: "Asia/Hong_Kong", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d);
+  } catch (e) { return d.toLocaleTimeString(); }
+}
+function parseApiTime(s) {
+  if (!s || s === "-") return NaN;
+  return Date.parse(String(s).replace(" ", "T") + "+08:00");
+}
+function minsText(t, now) {
+  const m = Math.round((t - now) / 60000);
+  if (m <= 0) return "埋站中";
+  return m + " 分鐘";
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+// ================= API =================
+const API = "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php";
+const store = {}; // store[line][code] = {up:[], down:[], msg, ts}
+let apiBackoffMs = 0;
+let lastCycleOk = 0;
+
+function lineStations(L) {
+  const set = new Set(L.main);
+  for (const b of L.branches) for (const c of b) set.add(c);
+  return [...set];
+}
+
+async function fetchStation(line, code) {
+  const url = API + "?line=" + encodeURIComponent(line) + "&sta=" + encodeURIComponent(code) + "&lang=TC";
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+    if (r.status === 429) { const e = new Error("429"); e.is429 = true; throw e; }
+    if (!r.ok) { const e = new Error("http " + r.status); e.retryable = r.status >= 500; throw e; }
+    return await r.json();
+  } finally { clearTimeout(to); }
+}
+
+async function runPool(tasks, n, fn) {
+  let i = 0;
+  const workers = Array.from({ length: n }, async () => {
+    while (i < tasks.length) { const t = tasks[i++]; try { await fn(t); } catch (e) {} }
+  });
+  await Promise.all(workers);
+}
+
+async function refreshCycle() {
+  const tasks = [];
+  for (const L of LINES) for (const c of lineStations(L)) tasks.push([L, c]);
+  let ok = 0, fail = 0, got429 = false;
+  const t0 = Date.now();
+  const doOne = async ([L, code]) => {
+    try {
+      const j = await fetchStation(L.code, code);
+      const key = L.code + "-" + code;
+      const d = (j.data && j.data[key]) || {};
+      (store[L.code] = store[L.code] || {})[code] = {
+        up: parseEntries(d.UP), down: parseEntries(d.DOWN),
+        msg: j.status === 0 ? j.message : null, ts: Date.now()
+      };
+      ok++;
+      return true;
+    } catch (e) { if (e && e.is429) got429 = true; return false; }
+  };
+  const failed = [];
+  await runPool(tasks, 4, async (t) => { if (!(await doOne(t))) failed.push(t); });
+  // 失敗嘅站即刻重試一次，唔好留空
+  let stillFailed = 0;
+  if (failed.length) {
+    await sleep(2000);
+    await runPool(failed, 2, async (t) => { if (!(await doOne(t))) stillFailed++; });
+  }
+  fail = stillFailed;
+  apiBackoffMs = got429 ? Math.min(apiBackoffMs ? apiBackoffMs * 2 : 15000, 300000) : 0;
+  if (ok > 0) lastCycleOk = Date.now();
+  return { ok, fail, ms: Date.now() - t0 };
+}
+
+// ================= MODEL =================
+// 每條綫每個站一個 route position：主綫用整數 index，支綫用 junction+0.5 起跳
+function buildPos(L) {
+  const pos = {};
+  L.main.forEach((c, i) => { pos[c] = i; });
+  for (const b of L.branches) {
+    let j = 0;
+    while (j < b.length && !(b[j] in pos)) j++;
+    const base = j < b.length ? pos[b[j]] : 0;
+    b.forEach((c, k) => { if (!(c in pos)) pos[c] = base + 0.5 + k * 0.01; });
+  }
+  return pos;
+}
+function segTime(L, a, b) {
+  const A = STATIONS[a], B = STATIONS[b];
+  if (!A || !B || a === b) return 120;
+  return haversineKm(A[0], A[1], B[0], B[1]) / L.speed * 3600 + 20; // +埋站時間
+}
+// ---- 頭班車/尾班車 ----
+function t2m(s) { const p = s.split(":"); return (+p[0]) * 60 + (+p[1]); }
+function m2t(m) {
+  m = ((Math.round(m) % 1440) + 1440) % 1440;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return (h < 10 ? "0" : "") + h + ":" + (mm < 10 ? "0" : "") + mm;
+}
+// 每條綫用嚟計頭尾班車嘅路綫：{run, k0, k1}，k0 = 往 run[0] 方向嘅開出站 key，k1 = 往 run 尾站方向嘅開出站 key（null = 無數據）
+function flRuns(L) {
+  const fl = FIRST_LAST[L.code];
+  if (!fl) return [];
+  const out = [];
+  const main = L.main.filter(c => STATIONS[c]);
+  if (L.code === "EAL") {
+    // 東鐵主綫去到上水，之後分羅湖/落馬洲兩條尾
+    if (fl.LOW) out.push({ run: main.concat(["LOW"]).filter(c => STATIONS[c]), k0: "LOW", k1: "ADM" });
+    if (fl.LMC) out.push({ run: main.concat(["LMC"]).filter(c => STATIONS[c]), k0: "LMC", k1: "ADM" });
+    return out;
+  }
+  if (main.length > 1) out.push({ run: main, k0: main[main.length - 1], k1: main[0] });
+  for (const b of (L.branches || [])) {
+    const run = b.filter(c => STATIONS[c]);
+    if (run.length < 2) continue;
+    const a = run[0], z = run[run.length - 1];
+    out.push({ run, k0: fl[z] ? z : null, k1: fl[a] ? a : null });
+  }
+  return out;
+}
+function flOffset(L, run, fromKey, code) {
+  // 由 fromKey 沿 run 行到 code 嘅分鐘數
+  const i0 = run.indexOf(fromKey), i1 = run.indexOf(code);
+  if (i0 < 0 || i1 < 0) return null;
+  const a = Math.min(i0, i1), b = Math.max(i0, i1);
+  let sec = 0;
+  for (let i = a; i < b; i++) sec += segTime(L, run[i], run[i + 1]);
+  return sec / 60;
+}
+// 某站每條綫每個方向嘅頭班車/尾班車（到本站時間）：[{dest, tc, first, last}]
+function firstLastAt(L, code) {
+  const fl = FIRST_LAST[L.code];
+  if (!fl) return [];
+  const isSun = new Date().getDay() === 0;
+  const out = [], seen = {};
+  for (const fr of flRuns(L)) {
+    const run = fr.run;
+    if (run.indexOf(code) < 0) continue;
+    const ends = [[run[0], fr.k0], [run[run.length - 1], fr.k1]];
+    for (const e of ends) {
+      const end = e[0], key = e[1];
+      if (!key || !fl[key]) continue;
+      let f = fl[key][0], l = fl[key][1];
+      if (isSun && fl.sun && fl.sun[key]) {
+        if (fl.sun[key][0]) f = fl.sun[key][0];
+        if (fl.sun[key][1]) l = fl.sun[key][1];
+      }
+      const off = flOffset(L, run, key, code);
+      if (off === null || !f || !l) continue;
+      const fm = t2m(f) + off;
+      let lm = t2m(l) + off;
+      if (lm < 720) lm += 1440; // 尾班車過午夜
+      const s = STATIONS[end];
+      if (seen[end]) { // 同一方向有多條尾（東鐵）：取最早頭班、最遲尾班
+        if (fm < seen[end]._fm) { seen[end].first = m2t(fm); seen[end]._fm = fm; }
+        if (lm > seen[end]._lm) { seen[end].last = m2t(lm); seen[end]._lm = lm; }
+      } else {
+        const o = { dest: end, tc: s ? s[2] : end, first: m2t(fm), last: m2t(lm), _fm: fm, _lm: lm };
+        seen[end] = o; out.push(o);
+      }
+    }
+  }
+  return out;
+}
+// 某綫服務時段（分鐘）：{start, end}，end 可能 >= 1440（過午夜）
+const _svcCache = {};
+function lineService(L) {
+  if (_svcCache[L.code]) return _svcCache[L.code];
+  const fl = FIRST_LAST[L.code];
+  if (!fl) return null;
+  let first = 1e9, last = -1e9;
+  for (const k in fl) {
+    if (k === "sun" || k === "hide") continue;
+    const v = fl[k];
+    if (!v || !v[0] || !v[1]) continue;
+    if (t2m(v[0]) < first) first = t2m(v[0]);
+    let lm = t2m(v[1]); if (lm < 720) lm += 1440;
+    if (lm > last) last = lm;
+  }
+  if (fl.hide) { let hm = t2m(fl.hide); if (hm < 720) hm += 1440; if (hm > last) last = hm; }
+  const run = L.main.filter(c => STATIONS[c]);
+  let jt = 0;
+  for (let i = 0; i < run.length - 1; i++) jt += segTime(L, run[i], run[i + 1]) / 60;
+  const w = { start: first - 10, end: last + jt + 10 };
+  _svcCache[L.code] = w;
+  return w;
+}
+// 呢一刻某綫係咪行緊車（過咗尾班車、未到頭班車就唔係）
+function lineInService(L, now) {
+  const w = lineService(L);
+  if (!w) return true;
+  const nm = now.getHours() * 60 + now.getMinutes();
+  const e = w.end % 1440, s = w.start;
+  if (e < s) return nm >= s || nm <= e; // 跨午夜：收車時段係 (e, s)
+  return nm >= s && nm <= e;
+}
+function parseEntries(arr) {
+  const out = [];
+  for (const e of (arr || [])) {
+    if (!e || e.valid === "N") continue;
+    const t = parseApiTime(e.time);
+    if (!t || isNaN(t)) continue;
+    if (!e.dest || !STATIONS[e.dest]) continue;
+    out.push({ dest: e.dest, plat: e.plat, t });
+  }
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+function collectReports(L, pos) {
+  const reps = [];
+  const S = store[L.code] || {};
+  for (const code of lineStations(L)) {
+    const rec = S[code]; if (!rec) continue;
+    const p = pos[code]; if (p === undefined) continue;
+    const all = rec.up.concat(rec.down);
+    for (const e of all) {
+      const dp = pos[e.dest]; if (dp === undefined) continue;
+      reps.push({ code, pos: p, t: e.t, dest: e.dest, destPos: dp, plat: e.plat });
+    }
+  }
+  return reps;
+}
+// 把唔同站回報嘅同一列車串連起嚟（去重）
+function linkTrains(L, pos, reps) {
+  const trains = [];
+  for (const dir of [1, -1]) {
+    const rs = reps.filter(r => Math.sign(r.destPos - r.pos) === dir)
+      .sort((a, b) => (dir * (a.pos - b.pos)) || (a.t - b.t));
+    const used = new Array(rs.length).fill(false);
+    for (let i = 0; i < rs.length; i++) {
+      if (used[i]) continue;
+      used[i] = true;
+      const chain = [rs[i]];
+      let cur = rs[i];
+      for (let j = i + 1; j < rs.length; j++) {
+        if (used[j]) continue;
+        const nx = rs[j];
+        if (nx.dest !== cur.dest) continue;
+        if (dir * (nx.pos - cur.pos) <= 0) continue; // 同一站唔串
+        const dt = (nx.t - cur.t) / 1000;
+        const st = segTime(L, cur.code, nx.code);
+        if (dt > 5 && Math.abs(dt - st) <= 75) { chain.push(nx); used[j] = true; cur = nx; }
+      }
+      trains.push({ L, pos, dest: chain[0].dest, dir, chain, sim: null });
+    }
+  }
+  return trains;
+}
+// 沿行駛方向搵下一站（優先主綫）
+function neighborCode(L, pos, code, dir) {
+  const p = pos[code];
+  let best = null, bd = Infinity;
+  const consider = (c) => {
+    if (c === code) return;
+    const q = pos[c]; if (q === undefined) return;
+    const d = dir * (q - p);
+    if (d > 0 && d < bd) { bd = d; best = c; }
+  };
+  L.main.forEach(consider);
+  if (!best) lineStations(L).forEach(consider);
+  return best;
+}
+// 沿路軌行：由 from 經中間站走到 to，回傳即時所在段 {from,to,frac}
+// （唔用 A→C 直綫，因為 schematic 有彎位，直綫會切出路軌外面）
+function trackSeg(L, pos, fromCode, toCode, frac) {
+  const dir = Math.sign((pos[toCode] ?? 0) - (pos[fromCode] ?? 0)) || 1;
+  const seq = [fromCode];
+  let cur = fromCode, guard = 0;
+  while (cur !== toCode && guard++ < 80) {
+    const nx = neighborCode(L, pos, cur, dir);
+    if (!nx || nx === cur || seq.includes(nx)) break;
+    seq.push(nx); cur = nx;
+  }
+  if (seq.length < 2 || seq[seq.length - 1] !== toCode) {
+    return { from: fromCode, to: toCode, frac }; // 行唔通，fallback 直綫
+  }
+  const ws = [];
+  let total = 0;
+  for (let i = 0; i < seq.length - 1; i++) {
+    const w = Math.max(1, segTime(L, seq[i], seq[i + 1]));
+    ws.push(w); total += w;
+  }
+  let d = Math.min(1, Math.max(0, frac)) * total;
+  for (let i = 0; i < ws.length; i++) {
+    if (d <= ws[i] || i === ws.length - 1) {
+      return { from: seq[i], to: seq[i + 1], frac: ws[i] > 0 ? Math.min(1, d / ws[i]) : 0 };
+    }
+    d -= ws[i];
+  }
+  return { from: fromCode, to: toCode, frac };
+}
+// 列車喺 now 嘅位置：{at:code} 或 {from,to,frac} 或 null（已駛離數據範圍）
+function trainPosAt(train, now) {
+  const L = train.L, pos = train.pos;
+  if (train.sim) {
+    const s = train.sim;
+    const cum = s.cum, main = s.main;
+    let i = 0;
+    while (i < cum.length - 2 && s.dist >= cum[i + 1]) i++;
+    const span = cum[i + 1] - cum[i] || 1;
+    const frac = Math.min(1, Math.max(0, (s.dist - cum[i]) / span));
+    return train.dir > 0
+      ? { from: main[i], to: main[i + 1], frac }
+      : { from: main[i + 1], to: main[i], frac };
+  }
+  const ch = train.chain;
+  for (const r of ch) if (Math.abs(now - r.t) < 20000) return { at: r.code };
+  if (now < ch[0].t) {
+    const prev = neighborCode(L, pos, ch[0].code, -train.dir);
+    if (!prev) return { at: ch[0].code };
+    const st = segTime(L, prev, ch[0].code);
+    const remain = (ch[0].t - now) / 1000;
+    if (remain <= st) return { from: prev, to: ch[0].code, frac: 1 - remain / st };
+    return { at: prev };
+  }
+  for (let i = 0; i < ch.length - 1; i++) {
+    if (now >= ch[i].t && now < ch[i + 1].t) {
+      const span = (ch[i + 1].t - ch[i].t) / 1000;
+      const frac = span > 0 ? (now - ch[i].t) / 1000 / span : 0;
+      return trackSeg(L, pos, ch[i].code, ch[i + 1].code, Math.min(1, Math.max(0, frac)));
+    }
+  }
+  const last = ch[ch.length - 1];
+  const next = neighborCode(L, pos, last.code, train.dir);
+  if (!next) return null;
+  const st = segTime(L, last.code, next);
+  const el = (now - last.t) / 1000;
+  if (el <= st) return { from: last.code, to: next, frac: el / st };
+  return null;
+}
+
+// ================= RENDER =================
+const $ = (id) => document.getElementById(id);
+let canvas, ctx, DPR = 1, W = 0, H = 0;
+const cam = { x: 0, y: 0, k: 1 };
+let fitK = 1; // fitView 時嘅 scale，label 閾值用
+const vis = {}; // lineCode -> bool
+let hoverStation = null, hoverTrain = null, selected = null, tipTrain = null;
+let dark = false;
+function applyDark() {
+  document.body.classList.toggle("dark", dark);
+  const b = $("btnDark");
+  if (b) b.textContent = dark ? "☀️" : "🌙";
+  try { localStorage.setItem("mtrDark", dark ? "1" : "0"); } catch (e) {}
+}
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+function fitView() {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const c in SCHEM) {
+    const x = SCHEM[c][0], y = trY(SCHEM[c][1]);
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const pad = 0.1;
+  cam.k = Math.min(W / ((x1 - x0) * (1 + pad)), H / ((y1 - y0) * (1 + pad)));
+  fitK = cam.k;
+  cam.x = (x0 + x1) / 2; cam.y = (y0 + y1) / 2;
+}
+const sX = (x) => (x - cam.x) * cam.k + W / 2;
+const sY = (y) => (y - cam.y) * cam.k + H / 2;
+// 維港拉闊：尖沙咀/尖東（y≈1470-1510）同港島（y≈1690）喺 schematic 太迫，
+// 用 smoothstep 將維港一帶垂直拉開 120 單位（適中，唔好拉到唔自然），車站、水域、標籤一齊變形保持一致
+const HARB_Y = 1550, HARB_HW = 110, HARB_GAP = 200;
+function trY(y) {
+  if (y <= HARB_Y - HARB_HW) return y;
+  if (y >= HARB_Y + HARB_HW) return y + HARB_GAP;
+  const t = (y - (HARB_Y - HARB_HW)) / (2 * HARB_HW);
+  return y + HARB_GAP * (t * t * (3 - 2 * t));
+}
+function stXY(code) { const s = SCHEM[code]; return s ? [sX(s[0]), sY(trY(s[1]))] : [W/2, H/2]; }
+
+function lineRuns(L) {
+  return [L.main].concat(L.branches).map(run => run.filter(c => STATIONS[c])).filter(r => r.length > 1);
+}
+function strokeRun(run, color, width, alpha) {
+  const pts = run.map(c => stXY(c));
+  ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = width;
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.beginPath();
+  if (pts.length < 3) {
+    pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  } else {
+    // 圓角曲線（跟官方站圖：直綫 + 圓角彎）
+    const R = 16;
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+      const d1 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+      const d2 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+      if (d1 < 2 || d2 < 2) { ctx.lineTo(p1[0], p1[1]); continue; }
+      const r = Math.min(R, d1 * 0.4, d2 * 0.4);
+      const ax = p1[0] - (p1[0] - p0[0]) / d1 * r, ay = p1[1] - (p1[1] - p0[1]) / d1 * r;
+      const bx = p1[0] + (p2[0] - p1[0]) / d2 * r, by = p1[1] + (p2[1] - p1[1]) / d2 * r;
+      ctx.lineTo(ax, ay);
+      ctx.quadraticCurveTo(p1[0], p1[1], bx, by);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last[0], last[1]);
+  }
+  ctx.stroke(); ctx.globalAlpha = 1;
+}
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+// 子彈頭列車：綫色車身 + 白色尖車頭（方向一望就知）+ 側窗
+function drawTrainCar(x, y, ang, color) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  // 方案A：簡約圓點（綫色）+ 白色方向箭
+  ctx.beginPath(); ctx.arc(0, 0, 9, 0, 7);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = "#1f2d3a"; ctx.stroke();
+  // 白色箭咀（指向行駛方向）
+  ctx.beginPath();
+  ctx.moveTo(5.5, 0); ctx.lineTo(-1.5, -4.5); ctx.lineTo(-1.5, 4.5);
+  ctx.closePath();
+  ctx.fillStyle = "#ffffff"; ctx.fill();
+  ctx.restore();
+}
+function interchangeSet() {
+  const count = {};
+  for (const L of LINES) { if (!vis[L.code]) continue; for (const c of lineStations(L)) count[c] = (count[c] || 0) + 1; }
+  return count;
+}
+function draw(now) {
+  // 深色/淺色調色板
+  const P = dark ? {
+    bg: "#0d1319", water: "#1b3a55", halo: "rgba(13,19,25,.92)",
+    region: "#7e97ab", casing: "#0d1319",
+    stFill: "#0d1319", stStroke: "#d7e0e8",
+    label: "#edf2f7", labelEn: "#93a5b5", hoverRing: "#ffffff"
+  } : {
+    bg: "#ffffff", water: "#bee0ee", halo: "rgba(255,255,255,.92)",
+    region: "#a8bccb", casing: "#ffffff",
+    stFill: "#ffffff", stStroke: "#1f2d3a",
+    label: "#1a2733", labelEn: "#5a6d7e", hoverRing: "#1f2d3a"
+  };
+  // 背景（陸地）+ 官方水域
+  ctx.fillStyle = P.bg; ctx.fillRect(0, 0, W, H);
+  for (const ring of WATER) {
+    ctx.beginPath();
+    for (let i = 0; i < ring.length; i++) {
+      const x = sX(ring[i][0]), y = sY(trY(ring[i][1]));
+      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = P.water; ctx.fill();
+  }
+  // 青衣島：水體（西接大海，覆蓋荃灣南尖角位），再畫實色島，青衣站喺島中心
+  const tsyw = [[835.0,1060.0],[818.7,1120.7],[772.9,1169.5],[706.7,1196.5],[543.3,1196.5],[477.1,1169.5],[431.3,1120.7],[415.0,1060.0],[431.3,999.3],[477.1,950.5],[543.3,1020.0],[706.7,1020.0],[772.9,950.5],[818.7,999.3]];
+  const tsyi = [[800.0,1092.0],[788.6,1124.5],[757.5,1148.3],[715.0,1157.0],[672.5,1148.3],[641.4,1124.5],[630.0,1092.0],[641.4,1059.5],[672.5,1035.7],[715.0,1027.0],[757.5,1035.7],[788.6,1059.5]];
+  ctx.beginPath();
+  tsyw.forEach((p, i) => i ? ctx.lineTo(sX(p[0]), sY(trY(p[1]))) : ctx.moveTo(sX(p[0]), sY(trY(p[1]))));
+  ctx.closePath();
+  ctx.fillStyle = P.water; ctx.fill();
+  ctx.beginPath();
+  tsyi.forEach((p, i) => i ? ctx.lineTo(sX(p[0]), sY(trY(p[1]))) : ctx.moveTo(sX(p[0]), sY(trY(p[1]))));
+  ctx.closePath();
+  ctx.fillStyle = P.bg; ctx.fill();
+  // 機場島水道：切開機場半島同大陸嘅連接，機場/博覽館變返離島
+  const apw = [[588.0,1125.0],[553.9,1145.7],[508.5,1159.1],[455.4,1163.5],[404.5,1163.7],[329.6,1168.6],[300.2,1146.6],[328.0,1125.0],[319.6,1106.6],[346.4,1088.7],[397.5,1075.7],[462.3,1076.0],[491.7,1098.2],[534.5,1107.6]];
+  ctx.beginPath();
+  apw.forEach((p, i) => i ? ctx.lineTo(sX(p[0]), sY(trY(p[1]))) : ctx.moveTo(sX(p[0]), sY(trY(p[1]))));
+  ctx.closePath();
+  ctx.fillStyle = P.water; ctx.fill();
+  // 地區標籤（官方站圖風格）：halo 確保唔俾路線遮住
+  ctx.textAlign = "center";
+  for (const [tc, en, lx, ly] of REGION_LABELS) {
+    const x = sX(lx), y = sY(trY(ly));
+    if (x < -100 || x > W + 100 || y < -100 || y > H + 100) continue;
+    ctx.lineWidth = 4; ctx.strokeStyle = P.halo;
+    ctx.font = "600 13px sans-serif";
+    ctx.strokeText(tc, x, y); ctx.fillStyle = P.region; ctx.fillText(tc, x, y);
+    ctx.font = "11px sans-serif";
+    ctx.strokeText(en, x, y + 15); ctx.fillStyle = P.region; ctx.fillText(en, x, y + 15);
+  }
+  // 車站 halo（確保近海車站唔會浸喺水入面）
+  for (const c in STATIONS) {
+    const [x, y] = stXY(c);
+    if (x < -20 || x > W + 20 || y < -20 || y > H + 20) continue;
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7);
+    ctx.fillStyle = P.bg; ctx.fill();
+  }
+  const xchg = interchangeSet();
+  // 綫路（白底鑲邊 + 主綫）
+  for (const L of LINES) {
+    if (!vis[L.code]) continue;
+    for (const run of lineRuns(L)) {
+      strokeRun(run, P.casing, 7.5, 0.9);
+      strokeRun(run, L.color, 4.5, 1);
+    }
+  }
+  // 車站：白底深色框（跟官方站圖）
+  const showTC = cam.k > fitK * 1.15;  // 中文站名（基本上長期顯示）
+  const showEN = cam.k > fitK * 2.2;   // 英文站名
+  for (const L of LINES) {
+    if (!vis[L.code]) continue;
+    for (const c of lineStations(L)) {
+      const [x, y] = stXY(c);
+      if (x < -20 || x > W + 20 || y < -20 || y > H + 20) continue;
+      const isX = (xchg[c] || 0) > 1;
+      if (isX) {
+        // 轉車站：彩色圓環，每條可轉乘嘅綫佔一段，一望就知轉得邊幾條綫
+        const xlines = [];
+        for (const L of LINES) { if (vis[L.code] && lineStations(L).indexOf(c) >= 0) xlines.push(L); }
+        const n = Math.max(2, xlines.length);
+        ctx.beginPath(); ctx.arc(x, y, 7.6, 0, 7);
+        ctx.fillStyle = P.stFill; ctx.fill();
+        ctx.lineWidth = 3.4;
+        for (let i = 0; i < n; i++) {
+          const a0 = -Math.PI / 2 + (i / n) * Math.PI * 2;
+          const a1 = -Math.PI / 2 + ((i + 1) / n) * Math.PI * 2 + 0.06;
+          ctx.beginPath(); ctx.arc(x, y, 5.7, a0, a1);
+          ctx.strokeStyle = xlines[i % xlines.length].color; ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(x, y, 7.6, 0, 7);
+        ctx.lineWidth = 1.2; ctx.strokeStyle = P.stStroke; ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(x, y, 3.4, 0, 7);
+        ctx.fillStyle = P.stFill; ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = P.stStroke; ctx.stroke();
+      }
+      if (showTC || c === hoverStation || c === selected) {
+        const nm = STATIONS[c][2], en = STATIONS[c][3];
+        const lo = (typeof LBL_OFF !== "undefined" && LBL_OFF[c]) || [9, -12, "left"];
+        ctx.textAlign = lo[2]; ctx.textBaseline = "top";
+        ctx.font = "600 12px sans-serif";
+        ctx.lineWidth = 3.5; ctx.strokeStyle = P.halo;
+        ctx.strokeText(nm, x + lo[0], y + lo[1]);
+        ctx.fillStyle = P.label; ctx.fillText(nm, x + lo[0], y + lo[1]);
+        if (showEN) {
+          ctx.font = "9px sans-serif";
+          ctx.strokeText(en, x + lo[0], y + lo[1] + 14);
+          ctx.fillStyle = P.labelEn; ctx.fillText(en, x + lo[0], y + lo[1] + 14);
+        }
+      }
+    }
+  }
+  // 列車：子彈頭列車（尖車頭指行駛方向）
+  for (const t of trains) {
+    if (!vis[t.L.code]) continue;
+    const p = trainPosAt(t, now);
+    if (!p) continue;
+    let x, y, dx = 0, dy = 0;
+    if (p.at) { [x, y] = stXY(p.at); }
+    else {
+      const [x1, y1] = stXY(p.from), [x2, y2] = stXY(p.to);
+      x = x1 + (x2 - x1) * p.frac; y = y1 + (y2 - y1) * p.frac;
+      const len = Math.hypot(x2 - x1, y2 - y1) || 1; dx = (x2 - x1) / len; dy = (y2 - y1) / len;
+    }
+    if (x < -30 || x > W + 30 || y < -30 || y > H + 30) continue;
+    t._x = x; t._y = y;
+    let ang;
+    if (dx || dy) { ang = Math.atan2(dy, dx); t._ang = ang; }
+    else if (t._ang !== undefined) { ang = t._ang; }
+    else {
+      // 喺站唔郁：用下一站方向
+      const nx = neighborCode(t.L, t.pos, p.at, t.dir);
+      if (nx) { const [nx2, ny2] = stXY(nx); ang = Math.atan2(ny2 - y, nx2 - x); }
+      else ang = 0;
+      t._ang = ang;
+    }
+    drawTrainCar(x, y, ang, t.L.color);
+    if (t === hoverTrain) {
+      ctx.beginPath(); ctx.arc(x, y, 14, 0, 7);
+      ctx.strokeStyle = P.hoverRing; ctx.lineWidth = 1.4; ctx.stroke();
+    }
+  }
+}
+
+// ---- pointer ----
+function bindPointer() {
+  const pointers = new Map();
+  let moved = 0, pinchD0 = 0, pinchK0 = 1, downXY = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    moved = 0; downXY = [e.clientX, e.clientY];
+    if (pointers.size === 2) {
+      const p = [...pointers.values()];
+      pinchD0 = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]); pinchK0 = cam.k;
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    const prev = pointers.get(e.pointerId);
+    if (prev) {
+      moved += Math.abs(e.clientX - prev[0]) + Math.abs(e.clientY - prev[1]);
+      pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    }
+    if (pointers.size === 2) {
+      const p = [...pointers.values()];
+      const d = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]);
+      if (pinchD0 > 0) zoomAt((p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2, pinchK0 * d / pinchD0);
+      return;
+    }
+    if (pointers.size === 1 && prev) {
+      cam.x -= (e.clientX - prev[0]) / cam.k;
+      cam.y -= (e.clientY - prev[1]) / cam.k;
+      hideTooltip();
+    }
+    updateHover(e.clientX, e.clientY);
+  });
+  const up = (e) => {
+    pointers.delete(e.pointerId);
+    if (moved < 8 && downXY) handleTap(e.clientX, e.clientY);
+    downXY = null;
+  };
+  canvas.addEventListener("pointerup", up);
+  canvas.addEventListener("pointercancel", up);
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, cam.k * Math.pow(1.0015, -e.deltaY)); }, { passive: false });
+  canvas.addEventListener("dblclick", () => defaultView());
+}
+function defaultView() {
+  fitView();
+  // 直式電話睇全圖會變幼幼一條：預設放大 2.6x 聚焦網絡中心（市區），其餘撳 －/拖拽去睇
+  zoomAt(W / 2, H / 2, fitK * 2.6);
+}
+function zoomAt(px, py, nk) {
+  nk = Math.min(fitK * 60, Math.max(fitK * 0.6, nk));
+  const wx = cam.x + (px - W / 2) / cam.k, wy = cam.y + (py - H / 2) / cam.k;
+  cam.k = nk;
+  cam.x = wx - (px - W / 2) / cam.k; cam.y = wy - (py - H / 2) / cam.k;
+}
+function nearestStation(px, py, maxD) {
+  let best = null, bd = maxD;
+  for (const L of LINES) {
+    if (!vis[L.code]) continue;
+    for (const c of lineStations(L)) {
+      const [x, y] = stXY(c);
+      const d = Math.hypot(px - x, py - y);
+      if (d < bd) { bd = d; best = c; }
+    }
+  }
+  return best;
+}
+function nearestTrain(px, py, maxD) {
+  let best = null, bd = maxD;
+  for (const t of trains) {
+    if (!vis[t.L.code] || t._x === undefined) continue;
+    const d = Math.hypot(px - t._x, py - t._y);
+    if (d < bd) { bd = d; best = t; }
+  }
+  return best;
+}
+function updateHover(px, py) {
+  hoverTrain = nearestTrain(px, py, 16);
+  hoverStation = hoverTrain ? null : nearestStation(px, py, 14);
+  canvas.style.cursor = (hoverTrain || hoverStation) ? "pointer" : "grab";
+  if (hoverTrain) showTrainTip(hoverTrain, px, py); else hideTooltip();
+}
+function handleTap(px, py) {
+  const t = nearestTrain(px, py, 20);
+  if (t) {
+    // 撳同一列車第二次就收埋 tooltip（toggle）
+    if (tipTrain === t && $("tooltip").style.display === "block") { hideTooltip(); return; }
+    tipTrain = t; showTrainTip(t, px, py, true); return;
+  }
+  const c = nearestStation(px, py, 16);
+  if (c) {
+    // 撳同一車站第二次就收埋時間表（toggle）
+    if (selected === c && $("panel").classList.contains("open")) { closeStation(); return; }
+    openStation(c); return;
+  }
+  // 撳空白位：收埋晒
+  hideTooltip(); closeStation();
+}
+function closeStation() { selected = null; $("panel").classList.remove("open"); }
+// 飛去指定車站（搜尋 / 定位用）
+function goStation(code) {
+  const s = SCHEM[code];
+  if (!s) return;
+  cam.x = s[0]; cam.y = trY(s[1]);
+  zoomAt(W / 2, H / 2, fitK * 4);
+  openStation(code);
+}
+// 車站搜尋
+function bindSearch() {
+  const inp = $("searchInput"), res = $("searchResults");
+  const close = () => res.classList.remove("open");
+  inp.addEventListener("input", () => {
+    const q = inp.value.trim().toLowerCase();
+    res.innerHTML = "";
+    if (!q) { close(); return; }
+    let n = 0;
+    for (const code in STATIONS) {
+      const s = STATIONS[code];
+      if ((s[2] + " " + s[3] + " " + code).toLowerCase().indexOf(q) < 0) continue;
+      let dots = "";
+      for (const L of LINES) { if (lineStations(L).indexOf(code) >= 0) dots += '<span class="dot" style="background:' + L.color + '"></span>'; }
+      const el = document.createElement("div");
+      el.className = "srItem";
+      el.innerHTML = dots + esc(s[2]) + '<span class="en">' + esc(s[3]) + "</span>";
+      el.onclick = ((c) => () => { close(); inp.value = ""; inp.blur(); goStation(c); })(code);
+      res.appendChild(el);
+      if (++n >= 8) break;
+    }
+    res.classList.toggle("open", n > 0);
+  });
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { inp.value = ""; close(); inp.blur(); }
+  });
+  document.addEventListener("pointerdown", (e) => {
+    const bar = $("searchbar");
+    if (bar && !bar.contains(e.target)) close();
+  });
+}
+// 定位：搵最近自己嘅車站
+function flashErr(msg) {
+  const eb = $("errbar");
+  eb.textContent = msg; eb.style.display = "block";
+  clearTimeout(eb._to);
+  eb._to = setTimeout(() => { if (eb.textContent === msg) eb.style.display = "none"; }, 3200);
+}
+function locateMe() {
+  if (!navigator.geolocation) { flashErr("呢個瀏覽器唔支援定位"); return; }
+  const insecure = location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1";
+  flashErr("定位緊…（第一次用要撳「允許」）");
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const la = pos.coords.latitude, lo = pos.coords.longitude;
+    let best = null, bd = 1e9;
+    for (const code in STATIONS) {
+      const s = STATIONS[code];
+      const d = haversineKm(la, lo, s[0], s[1]);
+      if (d < bd) { bd = d; best = code; }
+    }
+    const eb = $("errbar");
+    if (eb.textContent.indexOf("定位緊") === 0) eb.style.display = "none";
+    if (best) goStation(best);
+  }, (err) => {
+    if (err.code === 1) {
+      flashErr(insecure
+        ? "定位用唔到：經檔案開啟冇定位權限，請用 https 下載連結開，或者去瀏覽器設定開返定位權限"
+        : "定位被拒：請喺網址列撳 ⓘ → 網站設定 → 開返「定位」權限，再撳多次 📍");
+    } else if (err.code === 3) {
+      flashErr("定位逾時：請去空曠啲嘅地方再試一次");
+    } else {
+      flashErr("攞唔到你嘅位置，請稍後再試");
+    }
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+}
+
+// ================= UI =================
+let trains = [];
+let simMode = false, simSince = 0, simTrains_ = [];
+
+function setBadge(kind, text) {
+  const b = $("badge");
+  b.className = kind; b.textContent = text;
+}
+// 列車未來幾站預計到達（沿路軌向前行，用 segTime 估算）
+function trainETAs(t, now) {
+  const L = t.L, pos = t.pos;
+  const p = trainPosAt(t, now);
+  if (!p) return [];
+  const chainT = {};
+  if (!t.sim && t.chain) for (const r of t.chain) chainT[r.code] = r.t;
+  const etas = [];
+  let cur, acc;
+  if (p.at) { cur = p.at; acc = 0; }
+  else {
+    const st = segTime(L, p.from, p.to);
+    acc = Math.max(0, (1 - p.frac) * st);
+    cur = p.to;
+    etas.push({ code: p.to, sec: acc, live: chainT[p.to] > now });
+    if (chainT[p.to] > now) etas[0].sec = (chainT[p.to] - now) / 1000;
+  }
+  let guard = 0;
+  while (etas.length < 4 && guard++ < 24) {
+    const nx = neighborCode(L, pos, cur, t.dir);
+    if (!nx || nx === cur) break;
+    acc += segTime(L, cur, nx);
+    cur = nx;
+    let sec = acc, live = false;
+    if (chainT[nx] > now) { sec = (chainT[nx] - now) / 1000; live = true; }
+    if (!etas.length || etas[etas.length - 1].code !== nx) etas.push({ code: nx, sec, live });
+  }
+  return etas;
+}
+function showTrainTip(t, px, py, sticky) {
+  const tip = $("tooltip");
+  const d = STATIONS[t.dest];
+  const now = Date.now();
+  const etas = trainETAs(t, now);
+  let html = '<div style="margin-bottom:4px"><span class="lineTag" style="background:' + t.L.color + '"></span><b>' +
+    esc(t.L.tc) + "</b> 往 " + esc(d ? d[2] : t.dest) + "</div>";
+  if (!etas.length) {
+    html += '<div style="font-size:11px;color:#7c8fa3">暫無到站資料</div>';
+  } else {
+    for (const e of etas) {
+      const s = STATIONS[e.code];
+      const mins = Math.max(0, Math.round(e.sec / 60));
+      const when = e.sec < 45 ? "即將到站" : mins <= 0 ? "即將到站" : mins + " 分鐘";
+      html += '<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:2px 0">' +
+        "<span>" + esc(s ? s[2] : e.code) + "</span>" +
+        '<span style="color:' + (e.sec < 45 ? "#137333;font-weight:700" : "#5a6d7e") + '">' + when + "</span></div>";
+    }
+  }
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  tip.style.left = Math.max(8, Math.min(W - 190, px + 12)) + "px";
+  tip.style.top = Math.max(8, py - 40 - etas.length * 22) + "px";
+  if (sticky) { clearTimeout(tip._to); tip._to = setTimeout(hideTooltip, 6000); }
+}
+function hideTooltip() { $("tooltip").style.display = "none"; tipTrain = null; }
+
+function buildChips() {
+  const box = $("chips"); box.innerHTML = "";
+  for (const L of LINES) {
+    vis[L.code] = true;
+    const el = document.createElement("div");
+    el.className = "chip";
+    el.innerHTML = '<span class="dot" style="background:' + L.color + '"></span>' + esc(L.tc);
+    el.onclick = () => { vis[L.code] = !vis[L.code]; el.classList.toggle("off", !vis[L.code]); if (selected && !$("panel").classList.contains("open")) {} };
+    box.appendChild(el);
+  }
+}
+function openStation(code) {
+  selected = code;
+  const s = STATIONS[code];
+  $("panelName").textContent = s[2];
+  let nL = 0;
+  for (const L of LINES) { if (lineStations(L).indexOf(code) >= 0) nL++; }
+  $("panelEn").textContent = s[3] + (nL > 1 ? " · 可轉乘 " + nL + " 條綫" : "");
+  const body = $("panelBody"); body.innerHTML = "";
+  const now = Date.now();
+  for (const L of LINES) {
+    if (!vis[L.code]) continue;
+    if (lineStations(L).indexOf(code) < 0) continue;
+    const rec = (store[L.code] || {})[code];
+    const wrap = document.createElement("div");
+    let html = '<div style="margin:10px 0 2px;font-size:13px;font-weight:700"><span class="lineTag" style="background:' + L.color + '"></span>' + esc(L.tc) + "</div>";
+    if (simMode) {
+      html += '<div class="dep"><span class="meta">模擬模式：未能取得實時班次</span></div>';
+    } else if (!rec) {
+      html += '<div class="dep"><span class="meta">載入中…</span></div>';
+    } else {
+      if (rec.msg) html += '<div class="dep"><span class="meta">' + esc(rec.msg) + "</span></div>";
+      const all = rec.up.concat(rec.down).sort((a, b) => a.t - b.t).slice(0, 4);
+      if (!all.length) html += '<div class="dep"><span class="meta">暫無班次資料（可能已收車）</span></div>';
+      for (const e of all) {
+        const d = STATIONS[e.dest];
+        html += '<div class="dep"><span class="dest">往 ' + esc(d ? d[2] : e.dest) + "</span>" +
+          '<span class="meta">' + (e.plat ? esc(e.plat) + "號月台" : "") + "</span>" +
+          '<span class="mins">' + esc(minsText(e.t, now)) + "</span></div>";
+      }
+    }
+    // 頭班車 / 尾班車（到本站時間，每個方向一行）
+    const fls = firstLastAt(L, code);
+    for (const f of fls) {
+      html += '<div class="dep fl"><span class="dest">往 ' + esc(f.tc) + "</span>" +
+        '<span class="meta">頭班車 ' + f.first + " · 尾班車 " + f.last + "</span></div>";
+    }
+    wrap.innerHTML = html;
+    body.appendChild(wrap);
+  }
+  $("panel").classList.add("open");
+}
+function tickClock() { $("clock").textContent = fmtClock(new Date()); }
+
+// ================= SIM（後備模式） =================
+function enterSim(reason) {
+  if (simMode) return;
+  simMode = true; simSince = Date.now(); simTrains_ = [];
+  const H = { TWL: 180, ISL: 180, KTL: 180, TKL: 180, SIL: 180, DRL: 180, TML: 240, EAL: 300, TCL: 300, AEL: 600 };
+  for (const L of LINES) {
+    const main = L.main.filter(c => STATIONS[c]);
+    const cum = [0];
+    for (let i = 0; i < main.length - 1; i++) {
+      const A = STATIONS[main[i]], B = STATIONS[main[i + 1]];
+      cum.push(cum[i] + haversineKm(A[0], A[1], B[0], B[1]) * 1000);
+    }
+    const len = cum[cum.length - 1];
+    const routeTime = len / (L.speed * 1000 / 3600);
+    const n = Math.max(2, Math.min(28, Math.round(routeTime * 2 / (H[L.code] || 240))));
+    for (let k = 0; k < n; k++) {
+      const dd = (k * 2 * len) / n;
+      const dir = dd < len ? 1 : -1;
+      simTrains_.push({ L, pos: buildPos(L), dest: dir > 0 ? main[main.length - 1] : main[0], dir, sim: { main, cum, len, dist: dir > 0 ? dd : 2 * len - dd, v: L.speed * 1000 / 3600 } });
+    }
+  }
+  rebuildTrains();
+  setBadge("sim", "模擬模式");
+  const eb = $("errbar");
+  if (reason) { eb.textContent = reason + " — 先用模擬班次顯示，恢復後自動切回實時。"; eb.style.display = "block"; }
+}
+function simTick(dtMs) {
+  for (const t of simTrains_) {
+    const s = t.sim;
+    s.dist += t.dir * s.v * dtMs / 1000;
+    if (s.dist >= s.len) { s.dist = 2 * s.len - s.dist; t.dir = -1; t.dest = s.main[0]; }
+    else if (s.dist <= 0) { s.dist = -s.dist; t.dir = 1; t.dest = s.main[s.main.length - 1]; }
+  }
+}
+
+// ================= MAIN =================
+function rebuildTrains() {
+  const nowD = new Date();
+  if (simMode) { trains = simTrains_.filter(t => vis[t.L.code] && lineInService(t.L, nowD)); }
+  else {
+    trains = [];
+    for (const L of LINES) {
+      if (!vis[L.code]) continue;
+      if (!lineInService(L, nowD)) continue; // 過咗尾班車、未到頭班車：唔 show 呢條綫嘅車
+      const pos = buildPos(L);
+      trains.push.apply(trains, linkTrains(L, pos, collectReports(L, pos)));
+    }
+  }
+  const n = trains.length;
+  $("trainCount").textContent = n ? "🚇 " + n + " 列車行駛中" : "";
+  if (!simMode) {
+    // 深夜收車：唔再扮有車行，badge 話埋比人知
+    if (n === 0) setBadge("rest", "深夜休息中");
+    else if ($("badge").className === "rest") setBadge("live", "實時");
+  }
+}
+async function refreshLoop() {
+  // ?sim=1 強制模擬（測試用）
+  try { if (new URLSearchParams(location.search).get("sim") === "1") { enterSim(""); return; } } catch (e) {}
+  while (true) {
+    if (!document.hidden) {
+      if (!simMode) {
+        setBadge("updating", "更新中…");
+        const r = await refreshCycle();
+        if (r.ok === 0 && lastCycleOk === 0) enterSim("未能連接港鐵實時班次");
+        else { rebuildTrains(); if (trains.length) setBadge("live", "實時"); $("errbar").style.display = "none"; }
+      } else if (Date.now() - simSince > 5 * 60000) {
+        // 模擬模式下每 5 分鐘靜靜試一次實時
+        const r = await refreshCycle();
+        if (r.ok > 0) { simMode = false; $("errbar").style.display = "none"; rebuildTrains(); if (trains.length) setBadge("live", "實時"); }
+        else simSince = Date.now();
+      }
+    }
+    await sleep(60000 + apiBackoffMs);
+  }
+}
+let lastFrame = 0;
+function frame(rafNow) {
+  const dt = Math.min(100, rafNow - (lastFrame || rafNow)); lastFrame = rafNow;
+  if (simMode) simTick(dt);
+  draw(Date.now()); // 列車定位一定要用真實時間，唔用 rAF timestamp
+  requestAnimationFrame(frame);
+}
+function init() {
+  canvas = $("map"); ctx = canvas.getContext("2d");
+  resize(); window.addEventListener("resize", resize);
+  buildChips(); defaultView(); bindPointer();
+  $("zin").onclick = () => zoomAt(W / 2, H / 2, cam.k * 1.6);
+  $("zout").onclick = () => zoomAt(W / 2, H / 2, cam.k / 1.6);
+  $("zreset").onclick = () => defaultView();
+  $("panelClose").onclick = () => { $("panel").classList.remove("open"); selected = null; };
+  try { dark = localStorage.getItem("mtrDark") === "1"; } catch (e) {}
+  applyDark();
+  $("btnDark").onclick = () => { dark = !dark; applyDark(); };
+  $("btnLoc").onclick = locateMe;
+  bindSearch();
+  tickClock(); setInterval(tickClock, 1000);
+  setInterval(() => { if (!simMode && lastCycleOk) rebuildTrains(); }, 15000);
+  requestAnimationFrame(frame);
+  refreshLoop();
+}
+if (typeof window !== "undefined") {
+  window.MTRMAP = { STATIONS, LINES, haversineKm, parseApiTime, parseEntries, buildPos, segTime, collectReports, linkTrains, neighborCode, trainPosAt, lineStations, minsText, trY, FIRST_LAST, firstLastAt, lineInService, t2m, m2t };
+  if (!window.__TEST__ && typeof document !== "undefined" && document.getElementById && document.getElementById("map")) {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  }
+}
+
+</script>
+</body>
+</html>
